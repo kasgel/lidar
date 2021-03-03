@@ -6,7 +6,7 @@
  * directory for more details.
  */
 
-/**
+/** trolololo
  * @ingroup tests
  * @{
  *
@@ -485,8 +485,42 @@ int cmd_i2c_get_id(int argc, char **argv)
     return 0;
 }
 
+int lidar_distance(int argc, char **argv) {
+    (void)argv;
+    (void)argc;
+
+    const int addr = 0x10; // I2C ADDRESS of our lidar sensor
+    const int dev = 0; // I2C device
+
+    // We want to send following frame to get a data frame back.
+    // 5A 05 00 01 60
+    // This will return a data frame (9 bytes) of following format:
+    // 59 59 [DIST_L] [DIST_H] [STRENGTH_L] [STRENGTH_H] [TEMP_L] [TEMP_H] [CHECKSUM]
+    uint8_t data[5] = {0x5A, 0x05, 0x00, 0x01, 0x60};
+    int res = i2c_write_bytes(dev, addr, data, sizeof(data), 0);
+
+    if (res == I2C_ACK) {
+        printf("Success: i2c_%i wrote %i bytes\n", dev, sizeof(data));
+    } else {
+        return _print_i2c_error(res);
+    }
+
+    // Read data frame which we get back.
+    res = i2c_read_bytes(dev, addr, i2c_buf, 9, 0);
+
+    if (res == I2C_ACK) {
+        // Our distance measurement should now exist in the 3rd and 4th indices of i2c_buf
+        uint16_t distance = ((i2c_buf[3] << 8) | i2c_buf[2]);
+        printf("Distance: %i cm\n", distance);
+        return 0;
+    } else {
+        return _print_i2c_error(res);
+    }
+}
+
 static const shell_command_t shell_commands[] = {
     { "i2c_acquire", "Get access to the I2C bus", cmd_i2c_acquire },
+    { "distance", "Take a distance measurement from lidar", lidar_distance },
     { "i2c_release", "Release to the I2C bus", cmd_i2c_release },
 #ifdef MODULE_PERIPH_I2C_RECONFIGURE
     { "i2c_gpio", "Re-configures I2C pins to GPIO mode and back.", cmd_i2c_gpio },
@@ -506,9 +540,21 @@ static const shell_command_t shell_commands[] = {
 
 int main(void)
 {
-    puts("Start: Test for the low-level I2C driver");
+    puts("Start: Lidar testing\n");
 
     char line_buf[SHELL_DEFAULT_BUFSIZE];
+
+    puts("Attempting to acquire I2C bus\n");
+    int acq_req;
+    // We use 0 as the parameter to acquire the I2C bus, for use with the Lidar sensor.
+    acq_req = i2c_acquire(0);
+    if (acq_req != 0)
+    {
+        puts("Failed to acquire bus. Terminating program.\n");
+        return 1;
+    }
+    puts("I2C bus acquired. Issue command to Lidar.\n");
+    
     shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
 
     return 0;
