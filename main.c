@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <math.h>
 
 #include "periph_conf.h"
 #include "periph/gpio.h"
@@ -98,34 +99,34 @@ static int _print_i2c_error(int res)
 {
     if (res == -EOPNOTSUPP) {
         printf("Error: EOPNOTSUPP [%d]\n", -res);
-        return 1;
+        return 0;
     }
     else if (res == -EINVAL) {
         printf("Error: EINVAL [%d]\n", -res);
-        return 1;
+        return 0;
     }
     else if (res == -EAGAIN) {
         printf("Error: EAGAIN [%d]\n", -res);
-        return 1;
+        return 0;
     }
     else if (res == -ENXIO) {
         printf("Error: ENXIO [%d]\n", -res);
-        return 1;
+        return 0;
     }
     else if (res == -EIO) {
         printf("Error: EIO [%d]\n", -res);
-        return 1;
+        return 0;
     }
     else if (res == -ETIMEDOUT) {
         printf("Error: ETIMEDOUT [%d]\n", -res);
-        return 1;
+        return 0;
     }
     else if (res == I2C_ACK) {
         printf("Success: I2C_ACK [%d]\n", res);
         return 0;
     }
     printf("Error: Unknown error [%d]\n", res);
-    return 1;
+    return 0;
 }
 
 int cmd_i2c_acquire(int argc, char **argv)
@@ -485,10 +486,7 @@ int cmd_i2c_get_id(int argc, char **argv)
     return 0;
 }
 
-int lidar_distance(int argc, char **argv) {
-    (void)argv;
-    (void)argc;
-
+uint16_t lidar_distance(void) {
     const int addr = 0x10; // I2C ADDRESS of our lidar sensor
     const int dev = 0; // I2C device
 
@@ -499,28 +497,80 @@ int lidar_distance(int argc, char **argv) {
     uint8_t data[5] = {0x5A, 0x05, 0x00, 0x01, 0x60};
     int res = i2c_write_bytes(dev, addr, data, sizeof(data), 0);
 
-    if (res == I2C_ACK) {
-        printf("Success: i2c_%i wrote %i bytes\n", dev, sizeof(data));
-    } else {
+    if (res != I2C_ACK) {
         return _print_i2c_error(res);
     }
 
     // Read data frame which we get back.
     res = i2c_read_bytes(dev, addr, i2c_buf, 9, 0);
 
-    if (res == I2C_ACK) {
-        // Our distance measurement should now exist in the 3rd and 4th indices of i2c_buf
-        uint16_t distance = ((i2c_buf[3] << 8) | i2c_buf[2]);
-        printf("Distance: %i cm\n", distance);
-        return 0;
-    } else {
+    if (res != I2C_ACK) {
         return _print_i2c_error(res);
     }
+    
+    // Our distance measurement should now exist in the 3rd and 4th indices of i2c_buf
+    return ((i2c_buf[3] << 8) | i2c_buf[2]);
+}
+
+// Function for use in the method where we place Lidar to the side of the track
+uint16_t find_opposite_length(const int *x, const double *alpha, uint16_t d)
+{
+    // Required arguments are the distance to the beam-rail intersection, the angle in Radians of the Lidar with respect
+    // to the tracks (alpha), and the distance measured by the Lidar (d). Alpha must be between 0 and pi/2.
+    // The length of the opposite side of the triangle is returned, 0 if error.
+    uint16_t L;
+
+    // Check that the distance measured is not too short. SHOULD ALSO CHECK LONGEST DISTANCE
+    double theoretical_shortest_d = *x / cos(*alpha);
+    if(d < theoretical_shortest_d)
+    {
+        return 0;
+    }
+
+    // Check that alpha is within the bounds set.
+    if (*alpha < 0 || *alpha > M_PI / 2)
+    {
+        return 0;
+    }
+
+    // Calculate the length of the opposite side of the triangle.
+    L = d * sin(*alpha);
+    return L;
+}
+
+int print_distance(int argc, char **argv) {
+    (void)argv;
+    (void)argc;
+    uint16_t dist = lidar_distance();
+
+    if (dist > 0) {
+        printf("Distance: %i cm\n", dist);
+    }
+
+    return 0;
+}
+
+int print_opposite(int argc, char **argv)
+{
+    (void)argv;
+    (void)argc;
+    const double alpha = M_PI / 4;
+    const int x = 100;
+    uint16_t d = lidar_distance();
+    puts("Debug 1");
+    uint16_t L = find_opposite_length(&x, &alpha, d);
+    puts("Debug 1");
+    if (L > 0) {
+        printf("Opposite: %i cm\n", L);
+    }
+
+    return 0;
 }
 
 static const shell_command_t shell_commands[] = {
     { "i2c_acquire", "Get access to the I2C bus", cmd_i2c_acquire },
-    { "distance", "Take a distance measurement from lidar", lidar_distance },
+    { "print_distance", "Take a distance measurement from lidar", print_distance },
+    { "print_opposite", "Find opposite distance length", print_opposite },
     { "i2c_release", "Release to the I2C bus", cmd_i2c_release },
 #ifdef MODULE_PERIPH_I2C_RECONFIGURE
     { "i2c_gpio", "Re-configures I2C pins to GPIO mode and back.", cmd_i2c_gpio },
