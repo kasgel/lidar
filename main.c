@@ -28,6 +28,7 @@
 #include "periph/gpio.h"
 #include "periph/i2c.h"
 #include "shell.h"
+#include "main.h"
 
 #include <xtimer.h>
 
@@ -43,8 +44,19 @@
 
 #define ARG_ERROR       (-1)
 
+#define MEASUREMENT_FREQ (100) // 100 Hz
+#define MEASUREMENT_SLEEP (1000000/MEASUREMENT_FREQ) // Sleep interval in microseconds
+#define UPDATE_FREQ     (100)
+
 /* i2c_buf is global to reduce stack memory consumtion */
 static uint8_t i2c_buf[BUFSIZE];
+
+static double alpha;
+static uint16_t track_gauge;
+static uint16_t distance_from_rail;
+static uint16_t theoretical_shortest_d;
+static uint16_t theoretical_largest_d;
+static int16_t rolling_avg_buff[MEASUREMENT_FREQ];
 
 static inline void _print_i2c_read(i2c_t dev, uint16_t *reg, uint8_t *buf,
     int len)
@@ -641,11 +653,145 @@ int cont_dist(int argc, char **argv) {
     return 0;
 }
 
+void initialize(void) {
+    distance_from_rail = 1000; // 100 cm / 1000 mm
+    track_gauge = 1435;
+    alpha = M_PI/2;
+    printf("Cos(alpha): %f\n", cos(alpha));
+
+    if (alpha == M_PI/2) {
+        printf("Halleluja\n");
+        theoretical_largest_d = 60000;
+        theoretical_shortest_d = 1;
+    } else {
+        printf("asdasd\n");
+        theoretical_largest_d = (distance_from_rail + track_gauge) / cos(alpha);
+        theoretical_shortest_d = distance_from_rail / cos(alpha);
+    }
+}
+
+int cmd_initialise(int argc, char **argv) {
+    (void)argv;
+    (void)argc;
+    initialize();
+    return 0;
+}
+
+int cmd_start(int argc, char **argv) {
+    (void)argv;
+    (void)argc;
+    initialize();
+    printf("The valid region: %u mm - %u mm\n", theoretical_shortest_d, theoretical_largest_d);
+    printf("Measurement freq: %u\n", MEASUREMENT_FREQ);
+    printf("Measurement sleep (us): %u\n", MEASUREMENT_SLEEP);
+    return come_here_my_train();
+}
+
+// State 1 of state diagram: Loop until there is an object within distance bounds
+int come_here_my_train(void) {
+    printf("State 1\n");
+
+    while (true) {
+         uint16_t dist = lidar_distance();
+         if (dist > 0 && dist < theoretical_largest_d) {
+            printf("Train arrived at sensor: Distance: %u mm\n", dist);
+            return check_valid_region();
+         }
+         xtimer_usleep(1000);
+    }
+    return 0;
+}
+
+// State 2: Check if train is in valid region
+int check_valid_region(void) {
+    printf("State 2\n");
+    while (true) {
+        uint16_t dist = lidar_distance();
+        if (dist > theoretical_shortest_d && dist < theoretical_largest_d) {
+            printf("Entered valid region: Distance: %i mm. Moving to state 3.\n", dist);
+            return init_diff_buff();
+        } else if (dist == 0 || dist > theoretical_largest_d) {
+            printf("No object detected. Moving back to state 1.\n");
+            return come_here_my_train();
+        }
+    }
+    return 0;
+}
+
+// State 3: Initialise difference buffer
+int init_diff_buff(void)
+{
+    printf("State 3\n");
+    uint16_t dist = lidar_distance();
+    xtimer_usleep(MEASUREMENT_SLEEP);
+    uint16_t dist2 = lidar_distance();
+
+    if (dist == 0 || dist > theoretical_largest_d || dist2 == 0 || dist2 > theoretical_largest_d) {
+        printf("No object detected. Moving back to state 1.\n");
+        return come_here_my_train();
+    } else if ((dist > 0 && dist < theoretical_shortest_d) || (dist2 > 0 && dist2 < theoretical_shortest_d)) {
+        printf("Object out of valid region. Moving back to state 2.\n");
+        return check_valid_region();
+    }
+
+    int16_t difference = dist2 - dist;
+    printf("First diff: %d\n", difference);
+    for (int i = 0; i < MEASUREMENT_FREQ; i ++)
+    {
+        rolling_avg_buff[i] = difference;
+    }
+
+    printf("State 4\n");
+    return cont_velocity(dist2, 1);
+}
+
+// State 4: Continuous velocity measurements
+int cont_velocity(uint16_t prev_dist, uint16_t buff_index) {
+    xtimer_usleep(MEASUREMENT_SLEEP);
+
+    //printf("State 4, i: %i\n", buff_index);
+    uint16_t dist = lidar_distance();
+
+    if (dist == 0 || dist > theoretical_largest_d) {
+        printf("Moving from state 4 to state 1.\n");
+        return come_here_my_train();
+    } else if (dist > 0 && dist < theoretical_shortest_d) {
+        printf("Moving from state 4 to state 2.\n");
+        return check_valid_region();
+    }
+
+    int16_t difference = dist - prev_dist;
+    rolling_avg_buff[buff_index] = difference;
+
+    //printf("Should equal zero for velocity reading: %d\n", (buff_index + 1) % UPDATE_FREQ);
+
+    if ((buff_index + 1) % UPDATE_FREQ == 0)
+    {
+        // compute sum of differences
+        int16_t sum = 0;
+        for (int i = 0; i < MEASUREMENT_FREQ; i++) {
+            sum += rolling_avg_buff[i];
+        }
+        printf("Sum: %d\n", sum);
+        // use sum to compute velocity
+        double velocity = sum * sin(alpha); // mm/s
+        velocity = velocity / 277.778; // Convert from mm/s to km/h
+        printf("Velocity in km/h: %d\n", (int)velocity);
+    }
+    
+    if (buff_index == (MEASUREMENT_FREQ - 1)) {
+        return cont_velocity(dist, 0);
+    } else {
+        return cont_velocity(dist, buff_index + 1);
+    }
+}
+
+
 static const shell_command_t shell_commands[] = {
     { "i2c_acquire", "Get access to the I2C bus", cmd_i2c_acquire },
     { "print_distance", "Take a distance measurement from lidar", print_distance },
     { "print_opposite", "Find opposite distance length", print_opposite },
-    { "continuous_distance", "Take continuous distance measurements", cont_dist },
+    { "start", "Start state machine", cmd_start },
     { "i2c_release", "Release to the I2C bus", cmd_i2c_release },
 #ifdef MODULE_PERIPH_I2C_RECONFIGURE
     { "i2c_gpio", "Re-configures I2C pins to GPIO mode and back.", cmd_i2c_gpio },

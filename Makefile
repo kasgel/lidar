@@ -21,5 +21,6 @@ FEATURES_OPTIONAL = periph_i2c_reconfigure
 
 USEMODULE += shell
 USEMODULE += xtimer
+USEMODULE += printf_float
 
 include $(RIOTBASE)/Makefile.include
