@@ -494,7 +494,8 @@ uint16_t lidar_distance(void) {
     // 5A 05 00 01 60
     // This will return a data frame (9 bytes) of following format:
     // 59 59 [DIST_L] [DIST_H] [STRENGTH_L] [STRENGTH_H] [TEMP_L] [TEMP_H] [CHECKSUM]
-    uint8_t data[5] = {0x5A, 0x05, 0x00, 0x01, 0x60};
+    //uint8_t data[5] = {0x5A, 0x05, 0x00, 0x01, 0x60}; // Data frame for cm output
+    uint8_t data[5] = {0x5A, 0x05, 0x00, 0x06, 0xBA}; // Data frame for millimeter (mm) output
     int res = i2c_write_bytes(dev, addr, data, sizeof(data), 0);
 
     if (res != I2C_ACK) {
@@ -538,13 +539,59 @@ uint16_t find_opposite_length(const int *x, const double *alpha, uint16_t d)
     return L;
 }
 
+int init_lidar(int argc, char **argv) {
+    // This method is not used atm.
+    (void)argv;
+    (void)argc;
+    //const int addr = 0x10; // I2C ADDRESS of our lidar sensor
+    //const int dev = 0; // I2C device
+
+    // Set update rate to 100 Hz
+    //uint8_t data[6] = { 0x5A, 0x06, 0x03,  };
+
+    // Set measurement unit to millimeters
+    /*uint8_t data[5] = { 0x5A, 0x05, 0x05, 0x06, 0x6A }; // Checksum 0x6A
+    int res = i2c_write_bytes(dev, addr, data, sizeof(data), 0);
+    if (res != I2C_ACK) {
+        return _print_i2c_error(res);
+    }
+    xtimer_usleep(100000);
+
+    res = i2c_read_bytes(dev, addr, i2c_buf, 5, 0);
+    if (res != I2C_ACK) {
+        return _print_i2c_error(res);
+    } else {
+        _print_i2c_read(dev, NULL, i2c_buf, 9);
+    }*/
+
+    // Enable output
+    //uint8_t data2[5] = { 0x5A, 0x05, 0x07, 0x01, 0x67 }; // Checksum 0x67
+    /*uint8_t data2[5] = { 0x5A, 0x05, 0x07, 0x00, 0x66 }; // Checksum 0x67
+    res = i2c_write_bytes(dev, addr, data2, sizeof(data2), 0);
+    if (res != I2C_ACK) {
+        return _print_i2c_error(res);
+    }
+    xtimer_usleep(100000);
+
+    res = i2c_read_bytes(dev, addr, i2c_buf, 5, 0);
+    if (res != I2C_ACK) {
+        return _print_i2c_error(res);
+    } else {
+        _print_i2c_read(dev, NULL, i2c_buf, 5);
+    }*/
+
+    printf("OK\n");
+
+    return 0;
+}
+
 int print_distance(int argc, char **argv) {
     (void)argv;
     (void)argc;
     uint16_t dist = lidar_distance();
 
     if (dist > 0) {
-        printf("Distance: %i cm\n", dist);
+        printf("Distance: %i mm\n", dist);
     }
 
     return 0;
@@ -557,13 +604,40 @@ int print_opposite(int argc, char **argv)
     const double alpha = M_PI / 4;
     const int x = 100;
     uint16_t d = lidar_distance();
-    puts("Debug 1");
     uint16_t L = find_opposite_length(&x, &alpha, d);
-    puts("Debug 1");
     if (L > 0) {
-        printf("Opposite: %i cm\n", L);
+        printf("Opposite: %i mm\n", L);
     }
 
+    return 0;
+}
+
+// Function to calculate velocity (km/h), given two distances(mm) and a time interval between them (ms)
+double calculate_velocity(uint16_t d1, uint16_t d2, double t)
+{
+    if (t == 0)
+    {
+        // Interval is 0, so velocity must be 0
+        return 0;
+    }
+    uint16_t difference = d2 - d1;
+    double velocity = (difference / 1000000) / (t / 3600000); // convert from mm/ms to km/h
+    return velocity;
+}
+
+
+int cont_dist(int argc, char **argv) {
+    (void)argv;
+    (void)argc;
+
+    while (true) {
+         uint16_t dist = lidar_distance();
+         if (dist > 0) {
+             printf("Distance: %i mm\n", dist);
+         }
+         xtimer_usleep(1000);
+    }
+    
     return 0;
 }
 
@@ -571,6 +645,7 @@ static const shell_command_t shell_commands[] = {
     { "i2c_acquire", "Get access to the I2C bus", cmd_i2c_acquire },
     { "print_distance", "Take a distance measurement from lidar", print_distance },
     { "print_opposite", "Find opposite distance length", print_opposite },
+    { "continuous_distance", "Take continuous distance measurements", cont_dist },
     { "i2c_release", "Release to the I2C bus", cmd_i2c_release },
 #ifdef MODULE_PERIPH_I2C_RECONFIGURE
     { "i2c_gpio", "Re-configures I2C pins to GPIO mode and back.", cmd_i2c_gpio },
