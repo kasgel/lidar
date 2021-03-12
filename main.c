@@ -521,9 +521,11 @@ uint16_t lidar_distance(void) {
     if (res != I2C_ACK) {
         return _print_i2c_error(res);
     }
+    uint16_t d = ((i2c_buf[3] << 8) | i2c_buf[2]);
+    //printf("Dist: %d mm\n", d);
     
     // Our distance measurement should now exist in the 3rd and 4th indices of i2c_buf
-    return ((i2c_buf[3] << 8) | i2c_buf[2]);
+    return d;
 }
 
 // Function for use in the method where we place Lidar to the side of the track
@@ -655,9 +657,10 @@ int cont_dist(int argc, char **argv) {
 }
 
 void initialize(void) {
-    distance_from_rail = 1000; // 100 cm / 1000 mm
-    track_gauge = 1435;
-    alpha = M_PI/2;
+    distance_from_rail = 500; // 100 cm / 1000 mm
+    //track_gauge = 1435;
+    track_gauge = 6000;
+    alpha = M_PI/12;
     printf("Cos(alpha): %f\n", cos(alpha));
 
     if (alpha == M_PI/2) {
@@ -666,7 +669,8 @@ void initialize(void) {
         theoretical_shortest_d = 1;
     } else {
         printf("asdasd\n");
-        theoretical_largest_d = (distance_from_rail + track_gauge) / cos(alpha);
+        //theoretical_largest_d = (distance_from_rail + track_gauge) / cos(alpha);
+        theoretical_largest_d = 12000;
         theoretical_shortest_d = distance_from_rail / cos(alpha);
     }
 }
@@ -771,11 +775,11 @@ int cont_velocity(uint16_t prev_dist, uint16_t buff_index) {
     uint16_t dist = lidar_distance();
 
     if (dist == 0 || dist > theoretical_largest_d) {
-        print_flt_avg(buff_index);
+        print_flt_avg(MEASUREMENT_FREQ);
         printf("Moving from state 4 to state 1. Dist: %d mm\n", dist);
         return come_here_my_train();
     } else if (dist > 0 && dist < theoretical_shortest_d) {
-        print_flt_avg(buff_index);
+        print_flt_avg(MEASUREMENT_FREQ);
         printf("Moving from state 4 to state 2. Dist: %d mm\n", dist);
         return check_valid_region();
     }
@@ -784,7 +788,6 @@ int cont_velocity(uint16_t prev_dist, uint16_t buff_index) {
     rolling_avg_buff[buff_index] = difference;
 
     //printf("Should equal zero for velocity reading: %d\n", (buff_index + 1) % UPDATE_FREQ);
-
     if ((buff_index + 1) % UPDATE_FREQ == 0)
     {
         print_flt_avg(MEASUREMENT_FREQ);
