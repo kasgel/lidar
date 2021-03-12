@@ -21,6 +21,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <math.h>
 
@@ -660,7 +661,7 @@ void initialize(void) {
     distance_from_rail = 500; // 100 cm / 1000 mm
     //track_gauge = 1435;
     track_gauge = 6000;
-    alpha = M_PI/12;
+    alpha = M_PI/3;
     printf("Cos(alpha): %f\n", cos(alpha));
 
     if (alpha == M_PI/2) {
@@ -670,7 +671,7 @@ void initialize(void) {
     } else {
         printf("asdasd\n");
         //theoretical_largest_d = (distance_from_rail + track_gauge) / cos(alpha);
-        theoretical_largest_d = 12000;
+        theoretical_largest_d = 4000;
         theoretical_shortest_d = distance_from_rail / cos(alpha);
     }
 }
@@ -747,15 +748,23 @@ int init_diff_buff(void)
     }
 
     printf("State 4\n");
-    return cont_velocity(dist2, 1);
+    return cont_velocity(dist2, 1, false);
 }
 
-int print_flt_avg(uint16_t buff_index) {
+int print_flt_avg(uint16_t buff_index, bool buff_initialised) {
     // compute sum of differences
     int16_t sum = 0;
+    if (buff_initialised) {
+        buff_index = MEASUREMENT_FREQ;
+    }
+
     for (uint16_t i = 0; i < buff_index; i++) {
         sum += rolling_avg_buff[i];
     }
+
+    if (!buff_initialised)
+        sum = sum * (MEASUREMENT_FREQ / buff_index);
+    
     printf("Sum: %d\n", sum);
 
     // use sum to compute velocity
@@ -768,18 +777,18 @@ int print_flt_avg(uint16_t buff_index) {
 }
 
 // State 4: Continuous velocity measurements
-int cont_velocity(uint16_t prev_dist, uint16_t buff_index) {
+int cont_velocity(uint16_t prev_dist, uint16_t buff_index, bool buff_initialised) {
     xtimer_usleep(MEASUREMENT_SLEEP);
 
     //printf("State 4, i: %i\n", buff_index);
     uint16_t dist = lidar_distance();
 
     if (dist == 0 || dist > theoretical_largest_d) {
-        print_flt_avg(MEASUREMENT_FREQ);
+        print_flt_avg(buff_index, buff_initialised);
         printf("Moving from state 4 to state 1. Dist: %d mm\n", dist);
         return come_here_my_train();
     } else if (dist > 0 && dist < theoretical_shortest_d) {
-        print_flt_avg(MEASUREMENT_FREQ);
+        print_flt_avg(buff_index, buff_initialised);
         printf("Moving from state 4 to state 2. Dist: %d mm\n", dist);
         return check_valid_region();
     }
@@ -790,13 +799,13 @@ int cont_velocity(uint16_t prev_dist, uint16_t buff_index) {
     //printf("Should equal zero for velocity reading: %d\n", (buff_index + 1) % UPDATE_FREQ);
     if ((buff_index + 1) % UPDATE_FREQ == 0)
     {
-        print_flt_avg(MEASUREMENT_FREQ);
+        print_flt_avg(MEASUREMENT_FREQ, buff_initialised);
     }
     
     if (buff_index == (MEASUREMENT_FREQ - 1)) {
-        return cont_velocity(dist, 0);
+        return cont_velocity(dist, 0, true);
     } else {
-        return cont_velocity(dist, buff_index + 1);
+        return cont_velocity(dist, buff_index + 1, buff_initialised);
     }
 }
 
