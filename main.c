@@ -29,6 +29,7 @@
 #include "periph/i2c.h"
 #include "shell.h"
 #include "main.h"
+#include "fmt.h"
 
 #include <xtimer.h>
 
@@ -661,7 +662,7 @@ void initialize(void) {
 
     if (alpha == M_PI/2) {
         printf("Halleluja\n");
-        theoretical_largest_d = 60000;
+        theoretical_largest_d = 12000;
         theoretical_shortest_d = 1;
     } else {
         printf("asdasd\n");
@@ -773,10 +774,13 @@ int cont_velocity(uint16_t prev_dist, uint16_t buff_index) {
             sum += rolling_avg_buff[i];
         }
         printf("Sum: %d\n", sum);
+
         // use sum to compute velocity
-        double velocity = sum * sin(alpha); // mm/s
-        velocity = velocity / 277.778; // Convert from mm/s to km/h
-        printf("Velocity in km/h: %d\n", (int)velocity);
+        float velocity2 = sum * sin(alpha);  // mm/s
+        velocity2 = velocity2 / 277.778;  // Convert from mm/s to km/h
+        printf("Velocity in km/h: ");
+        print_float(velocity2, 2);
+        printf("\n");
     }
     
     if (buff_index == (MEASUREMENT_FREQ - 1)) {
