@@ -746,6 +746,23 @@ int init_diff_buff(void)
     return cont_velocity(dist2, 1);
 }
 
+int print_flt_avg(uint16_t buff_index) {
+    // compute sum of differences
+    int16_t sum = 0;
+    for (uint16_t i = 0; i < buff_index; i++) {
+        sum += rolling_avg_buff[i];
+    }
+    printf("Sum: %d\n", sum);
+
+    // use sum to compute velocity
+    float velocity2 = sum * sin(alpha);  // mm/s
+    velocity2 = velocity2 / 277.778;  // Convert from mm/s to km/h
+    printf("Velocity in km/h: ");
+    print_float(velocity2, 2);
+    printf("\n");
+    return 0;
+}
+
 // State 4: Continuous velocity measurements
 int cont_velocity(uint16_t prev_dist, uint16_t buff_index) {
     xtimer_usleep(MEASUREMENT_SLEEP);
@@ -754,10 +771,12 @@ int cont_velocity(uint16_t prev_dist, uint16_t buff_index) {
     uint16_t dist = lidar_distance();
 
     if (dist == 0 || dist > theoretical_largest_d) {
-        printf("Moving from state 4 to state 1.\n");
+        print_flt_avg(buff_index);
+        printf("Moving from state 4 to state 1. Dist: %d mm\n", dist);
         return come_here_my_train();
     } else if (dist > 0 && dist < theoretical_shortest_d) {
-        printf("Moving from state 4 to state 2.\n");
+        print_flt_avg(buff_index);
+        printf("Moving from state 4 to state 2. Dist: %d mm\n", dist);
         return check_valid_region();
     }
 
@@ -768,19 +787,7 @@ int cont_velocity(uint16_t prev_dist, uint16_t buff_index) {
 
     if ((buff_index + 1) % UPDATE_FREQ == 0)
     {
-        // compute sum of differences
-        int16_t sum = 0;
-        for (int i = 0; i < MEASUREMENT_FREQ; i++) {
-            sum += rolling_avg_buff[i];
-        }
-        printf("Sum: %d\n", sum);
-
-        // use sum to compute velocity
-        float velocity2 = sum * sin(alpha);  // mm/s
-        velocity2 = velocity2 / 277.778;  // Convert from mm/s to km/h
-        printf("Velocity in km/h: ");
-        print_float(velocity2, 2);
-        printf("\n");
+        print_flt_avg(MEASUREMENT_FREQ);
     }
     
     if (buff_index == (MEASUREMENT_FREQ - 1)) {
