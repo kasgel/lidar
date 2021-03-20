@@ -118,6 +118,7 @@ uint16_t lidar_distance(void) {
         return _print_i2c_error(res);
     }
     uint16_t d = ((i2c_buf[3] << 8) | i2c_buf[2]);
+    //uint16_t strength = ((i2c_buf[5] << 8) | i2c_buf[4]);
     printf("Dist: %d mm\n", d);
     
     // Our distance measurement should now exist in the 3rd and 4th indices of i2c_buf
@@ -128,11 +129,25 @@ int init_lidar(int argc, char **argv) {
     // This method is not used atm.
     (void)argv;
     (void)argc;
-    //const int addr = 0x10; // I2C ADDRESS of our lidar sensor
-    //const int dev = 0; // I2C device
+    const int addr = 0x10; // I2C ADDRESS of our lidar sensor
+    const int dev = 0; // I2C device
 
-    // Set update rate to 100 Hz
-    //uint8_t data[6] = { 0x5A, 0x06, 0x03,  };
+    // Set update rate to 1000 Hz
+    uint8_t data[6] = { 0x5A, 0x06, 0x03, 0x00, 0x01, 0x64};
+    int res = i2c_write_bytes(dev, addr, data, sizeof(data), 0);
+    if (res != I2C_ACK) {
+        return _print_i2c_error(res);
+    }
+    xtimer_usleep(100000);
+
+    res = i2c_read_bytes(dev, addr, i2c_buf, 5, 0);
+    if (res != I2C_ACK) {
+        return _print_i2c_error(res);
+    } else {
+        //_print_i2c_read(dev, NULL, i2c_buf, 9);
+    }
+    printf("OK\n");
+    return 0;
 
     // Set measurement unit to millimeters
     /*uint8_t data[5] = { 0x5A, 0x05, 0x05, 0x06, 0x6A }; // Checksum 0x6A
@@ -186,15 +201,13 @@ void initialize(void) {
     distance_from_rail = 500; // 100 cm / 1000 mm
     //track_gauge = 1435;
     track_gauge = 6000;
-    alpha = M_PI/3;
+    alpha = M_PI/2;
     printf("Cos(alpha): %f\n", cos(alpha));
 
     if (alpha == M_PI/2) {
-        printf("Halleluja\n");
-        theoretical_largest_d = 12000;
-        theoretical_shortest_d = 1;
+        theoretical_largest_d = 1620;
+        theoretical_shortest_d = 400;
     } else {
-        printf("asdasd\n");
         //theoretical_largest_d = (distance_from_rail + track_gauge) / cos(alpha);
         theoretical_largest_d = 12000;
         theoretical_shortest_d = 3500;
@@ -334,6 +347,7 @@ int cont_velocity(uint16_t prev_dist, uint16_t buff_index, bool buff_initialised
 static const shell_command_t shell_commands[] = {
     { "print_distance", "Take a distance measurement from lidar", print_distance },
     { "start", "Start state machine", cmd_start },
+    { "rate", "Update frame rate", init_lidar },
     { NULL, NULL, NULL }
 };
 
