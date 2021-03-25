@@ -6,7 +6,7 @@
  * directory for more details.
  */
 
-/** trolololo
+/** 
  * @ingroup tests
  * @{
  *
@@ -24,6 +24,8 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <math.h>
+#include <inttypes.h>
+#include <xtimer.h>
 
 #include "periph_conf.h"
 #include "periph/gpio.h"
@@ -31,24 +33,53 @@
 #include "shell.h"
 #include "main.h"
 #include "fmt.h"
+#include "msg.h"
+#include "net/gnrc.h"
+#include "net/gnrc/ipv6.h"
+#include "net/gnrc/netif.h"
+#include "net/gnrc/netif/hdr.h"
+#include "net/gnrc/udp.h"
+#include "net/gnrc/pktdump.h"
+#include "net/gnrc/pkt.h"
+#include "net/gnrc/pktbuf.h"
+#include "timex.h"
+#include "utlist.h"
+#include "od.h"
 
-#include <xtimer.h>
 
 #ifndef I2C_ACK
 #define I2C_ACK         (0)
 #endif
 
-#define INVALID_ARGS    puts("Error: Invalid number of arguments");
-
 #define BUFSIZE         (128U)
-
-#define CONVERT_ERROR   (-32768)
-
-#define ARG_ERROR       (-1)
 
 #define MEASUREMENT_FREQ (100) // 100 Hz
 #define MEASUREMENT_SLEEP (1000000*0.97/MEASUREMENT_FREQ) // Sleep interval in microseconds (modified to account for code execution)
 #define UPDATE_FREQ     (100)
+
+// For sending UDP messages
+#define SERVER_MSG_QUEUE_SIZE   (8U)
+#define SERVER_PRIO             (THREAD_PRIORITY_MAIN - 1)
+#define SERVER_STACKSIZE        (THREAD_STACKSIZE_MAIN)
+#define SERVER_RESET            (0x8fae)
+
+// Message types
+#define MSG_STATE_ONE       (0x01)
+#define MSG_STATE_TWO       (0x02)
+#define MSG_STATE_THREE     (0x03)
+#define MSG_STATE_FOUR      (0x04)
+
+
+static char* recipient = "2001:6b0:1:1141:fec2:3d00:1:7f97";
+
+static gnrc_netreg_entry_t server = GNRC_NETREG_ENTRY_INIT_PID(0, KERNEL_PID_UNDEF);
+
+static char server_stack[SERVER_STACKSIZE];
+static msg_t server_queue[SERVER_MSG_QUEUE_SIZE];
+static kernel_pid_t server_pid = KERNEL_PID_UNDEF;
+//static uint8_t send_count = 0;
+static gnrc_pktsnip_t *payload;
+
 
 /* i2c_buf is global to reduce stack memory consumtion */
 static uint8_t i2c_buf[BUFSIZE];
@@ -59,6 +90,206 @@ static uint16_t distance_from_rail;
 static uint16_t theoretical_shortest_d;
 static uint16_t theoretical_largest_d;
 static int16_t rolling_avg_buff[MEASUREMENT_FREQ];
+
+static void *_eventloop(void *arg)
+{
+    (void)arg;
+    msg_t msg, reply;
+    unsigned int rcv_count = 0;
+
+    /* setup the message queue */
+    msg_init_queue(server_queue, SERVER_MSG_QUEUE_SIZE);
+
+    reply.content.value = (uint32_t)(-ENOTSUP);
+    reply.type = GNRC_NETAPI_MSG_TYPE_ACK;
+    
+    gnrc_pktsnip_t *pkt = NULL;
+
+    while (1) {
+        msg_receive(&msg);
+
+        switch (msg.type) {
+            case GNRC_NETAPI_MSG_TYPE_RCV:
+                printf("Packets received: %u\n", ++rcv_count);
+                pkt = msg.content.ptr;
+                pkt = gnrc_pktsnip_search_type(pkt, GNRC_NETTYPE_UNDEF);
+                //printf("Packet size: %d\n", pkt->size);
+                od_hex_dump(pkt->data, pkt->size, OD_WIDTH_DEFAULT);
+                //printf("Content of message: %" PRIu32 "\n", msg.content.value);
+                //printf("Content of message char: %c\n", (char*)pkt->data);
+                float vel = 0;
+                switch (*(uint8_t*)pkt->data)
+                {
+                    case MSG_STATE_ONE:
+                        printf("State 1: No object detected.\n");
+                        break;
+                    case MSG_STATE_TWO:
+                        printf("State 2: Object in range.\n");
+                        break;
+                    case MSG_STATE_THREE:
+                        printf("State 3: Object entering valid region.\n");
+                        break;
+                    case MSG_STATE_FOUR:
+                        memcpy(&vel, (uint8_t*)pkt->data + 1, sizeof(vel));
+                        //vel = *((uint8_t*)(pkt->data) + 1);
+                        printf("State 4: Object velocity: ");
+                        print_float(vel, 2);
+                        printf("\n");
+                        break;
+                    default:
+                        printf("Unknown message received: %d", *(uint8_t*)pkt->data);
+                        break;
+                }
+                //print_byte_hex(*(uint8_t*)pkt->data);
+                //printf("\n");
+                //printf("Old printf statement %u\n", *(uint8_t*)pkt->data);
+                gnrc_pktbuf_release(msg.content.ptr);
+                break;
+            case GNRC_NETAPI_MSG_TYPE_GET:
+            case GNRC_NETAPI_MSG_TYPE_SET:
+                msg_reply(&msg, &reply);
+                break;
+            case SERVER_RESET:
+                rcv_count = 0;
+                break;
+            default:
+                break;
+        }
+    }
+
+    /* never reached */
+    return NULL;
+}
+
+static void send(char *addr_str, char *port_str, uint8_t *data, unsigned int len, unsigned int num) {
+    gnrc_netif_t *netif = NULL;
+    char *iface;
+    uint16_t port;
+    ipv6_addr_t addr;
+
+    iface = ipv6_addr_split_iface(addr_str);
+    if ((!iface) && (gnrc_netif_numof() == 1)) {
+        netif = gnrc_netif_iter(NULL);
+    }
+    else if (iface) {
+        netif = gnrc_netif_get_by_pid(atoi(iface));
+    }
+
+    /* parse destination address */
+    if (ipv6_addr_from_str(&addr, addr_str) == NULL) {
+        puts("Error: unable to parse destination address");
+        return;
+    }
+    /* parse port */
+    port = atoi(port_str);
+    if (port == 0) {
+        puts("Error: unable to parse destination port");
+        return;
+    }
+    
+    // Wait until packet buffer is empty
+    /*printf("1: %d\n", gnrc_pktbuf_is_empty());
+    while (!gnrc_pktbuf_is_empty()) {
+        //printf("sleepytime\n");
+        xtimer_usleep(1000);
+    }*/
+
+    for (unsigned int i = 0; i < num; i++) {
+        gnrc_pktsnip_t *udp, *ip;
+        unsigned payload_size;
+
+        /* allocate payload */
+        payload = gnrc_pktbuf_add(NULL, data, len, GNRC_NETTYPE_UNDEF);
+        printf("2: %d\n", gnrc_pktbuf_is_empty());
+        if (payload == NULL) {
+            puts("Error: unable to copy data to packet buffer");
+            return;
+        }
+        /* store size for output */
+        payload_size = (unsigned)payload->size;
+        /* allocate UDP header, set source port := destination port */
+        udp = gnrc_udp_hdr_build(payload, port, port);
+        if (udp == NULL) {
+            puts("Error: unable to allocate UDP header");
+            gnrc_pktbuf_release(payload);
+            return;
+        }
+        /* allocate IPv6 header */
+        ip = gnrc_ipv6_hdr_build(udp, NULL, &addr);
+        if (ip == NULL) {
+            puts("Error: unable to allocate IPv6 header");
+            gnrc_pktbuf_release(udp);
+            return;
+        }
+        /* add netif header, if interface was given */
+        if (netif != NULL) {
+            gnrc_pktsnip_t *netif_hdr = gnrc_netif_hdr_build(NULL, 0, NULL, 0);
+
+            gnrc_netif_hdr_set_netif(netif_hdr->data, netif);
+            LL_PREPEND(ip, netif_hdr);
+        }
+        printf("3: %d\n", gnrc_pktbuf_is_empty());
+        /* send packet */
+        if (!gnrc_netapi_dispatch_send(GNRC_NETTYPE_UDP, GNRC_NETREG_DEMUX_CTX_ALL, ip)) {
+            puts("Error: unable to locate UDP thread");
+            gnrc_pktbuf_release(ip);
+            return;
+        }
+        /* access to `payload` was implicitly given up with the send operation above
+         * => use temporary variable for output */
+        printf("Success: sent %u byte(s) to [%s]:%u\n", payload_size, addr_str,
+               port);
+               printf("4: %d\n", gnrc_pktbuf_is_empty());
+        xtimer_usleep(20000);
+    }
+}
+
+static void start_server(char *port_str)
+{
+    uint16_t port;
+
+    /* check if server is already running */
+    if (server.target.pid != KERNEL_PID_UNDEF) {
+        printf("Error: server already running on port %" PRIu32 "\n",
+               server.demux_ctx);
+        return;
+    }
+    /* parse port */
+    port = atoi(port_str);
+    if (port == 0) {
+        puts("Error: invalid port specified");
+        return;
+    }
+    if (server_pid <= KERNEL_PID_UNDEF) {
+        /* start server */
+        server_pid = thread_create(server_stack, sizeof(server_stack), SERVER_PRIO,
+                                   THREAD_CREATE_STACKTEST, _eventloop, NULL, "UDP server");
+        if (server_pid <= KERNEL_PID_UNDEF) {
+            puts("Error: can not start server thread");
+            return;
+        }
+    }
+    /* register server to receive messages from given port */
+    gnrc_netreg_entry_init_pid(&server, port, server_pid);
+    gnrc_netreg_register(GNRC_NETTYPE_UDP, &server);
+    printf("Success: started UDP server on port %" PRIu16 "\n", port);
+}
+
+// static void stop_server(void)
+// {
+//     msg_t msg = { .type = SERVER_RESET };
+//     /* check if server is running at all */
+//     if (server.target.pid == KERNEL_PID_UNDEF) {
+//         printf("Error: server was not running\n");
+//         return;
+//     }
+//     /* reset server state */
+//     msg_send(&msg, server.target.pid);
+//     /* stop server */
+//     gnrc_netreg_unregister(GNRC_NETTYPE_UDP, &server);
+//     gnrc_netreg_entry_init_pid(&server, 0, KERNEL_PID_UNDEF);
+//     puts("Success: stopped UDP server");
+// }
 
 static int _print_i2c_error(int res)
 {
@@ -119,7 +350,7 @@ uint16_t lidar_distance(void) {
     }
     uint16_t d = ((i2c_buf[3] << 8) | i2c_buf[2]);
     //uint16_t strength = ((i2c_buf[5] << 8) | i2c_buf[4]);
-    printf("Dist: %d mm\n", d);
+    //printf("Dist: %d mm\n", d);
     
     // Our distance measurement should now exist in the 3rd and 4th indices of i2c_buf
     return d;
@@ -225,9 +456,20 @@ int cmd_start(int argc, char **argv) {
     return come_here_my_train();
 }
 
+int cmd_start_server(int argc, char **argv)
+{
+    (void)argv;
+    (void)argc;
+    start_server("8888");
+    return 0;
+}
+
 // State 1 of state diagram: Loop until there is an object within distance bounds
 int come_here_my_train(void) {
     printf("State 1\n");
+    //xtimer_usleep(600000);
+    uint8_t msg[1] = {MSG_STATE_ONE};
+    send(recipient, "8888", msg, 1, 1);
 
     while (true) {
          uint16_t dist = lidar_distance();
@@ -243,6 +485,8 @@ int come_here_my_train(void) {
 // State 2: Check if train is in valid region
 int check_valid_region(void) {
     printf("State 2\n");
+    uint8_t msg[1] = {MSG_STATE_TWO};
+    send(recipient, "8888", msg, 1, 1);
     while (true) {
         uint16_t dist = lidar_distance();
         if (dist > theoretical_shortest_d && dist < theoretical_largest_d) {
@@ -260,6 +504,9 @@ int check_valid_region(void) {
 int init_diff_buff(void)
 {
     printf("State 3\n");
+    //uint8_t msg[1] = {MSG_STATE_THREE};
+    //send(recipient, "8888", msg, 1, 1);
+
     uint16_t dist = lidar_distance();
     xtimer_usleep(MEASUREMENT_SLEEP);
     uint16_t dist2 = lidar_distance();
@@ -297,7 +544,11 @@ int print_flt_avg(uint16_t buff_index, bool buff_initialised) {
     }
 
     if (!buff_initialised)
+    {
         sum = sum * (MEASUREMENT_FREQ / buff_index);
+        //xtimer_usleep(300000);
+    }
+    
     
     printf("Sum: %d\n", sum);
 
@@ -307,6 +558,21 @@ int print_flt_avg(uint16_t buff_index, bool buff_initialised) {
     printf("Velocity in km/h: ");
     print_float(velocity2, 2);
     printf("\n");
+
+    //char* msg = malloc(sizeof(uint8_t) + sizeof(float) + 1);
+    uint8_t msg[5] = {MSG_STATE_FOUR, 0xFF, 0xFF, 0xFF, 0xFF};
+
+    memcpy(msg+1, &velocity2, sizeof(velocity2));
+
+    //float* asd = (float*)msg+1;
+    //*asd = velocity2;
+    //msg[0] = MSG_STATE_FOUR;
+    //msg[1] = velocity2;
+    //msg[2] = 0;
+    send(recipient, "8888", msg, 5, 1);
+
+    //free(msg);
+
     return 0;
 }
 
@@ -348,6 +614,7 @@ static const shell_command_t shell_commands[] = {
     { "print_distance", "Take a distance measurement from lidar", print_distance },
     { "start", "Start state machine", cmd_start },
     { "rate", "Update frame rate", init_lidar },
+    { "start_server", "Starts the UDP server", cmd_start_server},
     { NULL, NULL, NULL }
 };
 
@@ -367,7 +634,15 @@ int main(void)
         return 1;
     }
     puts("I2C bus acquired. Issue command to Lidar.\n");
+
+    // Initialise packet buffer
+    gnrc_pktbuf_init();
     
+    // Start the server
+    //start_server("8888");
+
+    puts("Server started.\n");
+
     shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
 
     return 0;
