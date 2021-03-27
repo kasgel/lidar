@@ -70,7 +70,7 @@
 #define MSG_STATE_FOUR      (0x04)
 
 
-static char* recipient = "2001:6b0:1:1141:fec2:3d00:1:7f97";
+static char* recipient = "fe80::fec2:3d00:1:7f97";
 
 static gnrc_netreg_entry_t server = GNRC_NETREG_ENTRY_INIT_PID(0, KERNEL_PID_UNDEF);
 
@@ -200,7 +200,7 @@ static void send(char *addr_str, char *port_str, uint8_t *data, unsigned int len
 
         /* allocate payload */
         payload = gnrc_pktbuf_add(NULL, data, len, GNRC_NETTYPE_UNDEF);
-        printf("2: %d\n", gnrc_pktbuf_is_empty());
+        //printf("2: %d\n", gnrc_pktbuf_is_empty());
         if (payload == NULL) {
             puts("Error: unable to copy data to packet buffer");
             return;
@@ -228,7 +228,7 @@ static void send(char *addr_str, char *port_str, uint8_t *data, unsigned int len
             gnrc_netif_hdr_set_netif(netif_hdr->data, netif);
             LL_PREPEND(ip, netif_hdr);
         }
-        printf("3: %d\n", gnrc_pktbuf_is_empty());
+        //printf("3: %d\n", gnrc_pktbuf_is_empty());
         /* send packet */
         if (!gnrc_netapi_dispatch_send(GNRC_NETTYPE_UDP, GNRC_NETREG_DEMUX_CTX_ALL, ip)) {
             puts("Error: unable to locate UDP thread");
@@ -239,8 +239,8 @@ static void send(char *addr_str, char *port_str, uint8_t *data, unsigned int len
          * => use temporary variable for output */
         printf("Success: sent %u byte(s) to [%s]:%u\n", payload_size, addr_str,
                port);
-               printf("4: %d\n", gnrc_pktbuf_is_empty());
-        xtimer_usleep(20000);
+               //printf("4: %d\n", gnrc_pktbuf_is_empty());
+        //xtimer_usleep(20000);
     }
 }
 
@@ -356,6 +356,18 @@ uint16_t lidar_distance(void) {
     return d;
 }
 
+int cmd_dist(int argc, char **argv) {
+    (void) argv;
+    (void) argc;
+    
+    while (true) {
+        printf("Dist: %d mm\n", lidar_distance());
+        xtimer_usleep(1000);
+    }
+    
+    return 0;
+}
+
 int init_lidar(int argc, char **argv) {
     // This method is not used atm.
     (void)argv;
@@ -436,8 +448,8 @@ void initialize(void) {
     printf("Cos(alpha): %f\n", cos(alpha));
 
     if (alpha == M_PI/2) {
-        theoretical_largest_d = 1620;
-        theoretical_shortest_d = 400;
+        theoretical_largest_d = 1160;
+        theoretical_shortest_d = 300;
     } else {
         //theoretical_largest_d = (distance_from_rail + track_gauge) / cos(alpha);
         theoretical_largest_d = 12000;
@@ -468,8 +480,8 @@ int cmd_start_server(int argc, char **argv)
 int come_here_my_train(void) {
     printf("State 1\n");
     //xtimer_usleep(600000);
-    uint8_t msg[1] = {MSG_STATE_ONE};
-    send(recipient, "8888", msg, 1, 1);
+   // uint8_t msg[1] = {MSG_STATE_ONE};
+    //send(recipient, "8888", msg, 1, 1);
 
     while (true) {
          uint16_t dist = lidar_distance();
@@ -485,8 +497,8 @@ int come_here_my_train(void) {
 // State 2: Check if train is in valid region
 int check_valid_region(void) {
     printf("State 2\n");
-    uint8_t msg[1] = {MSG_STATE_TWO};
-    send(recipient, "8888", msg, 1, 1);
+    //uint8_t msg[1] = {MSG_STATE_TWO};
+    //send(recipient, "8888", msg, 1, 1);
     while (true) {
         uint16_t dist = lidar_distance();
         if (dist > theoretical_shortest_d && dist < theoretical_largest_d) {
@@ -531,7 +543,7 @@ int init_diff_buff(void)
 }
 
 int print_flt_avg(uint16_t buff_index, bool buff_initialised) {
-    printf("Hello\n");
+    //printf("Hello\n");
 
     // compute sum of differences
     int16_t sum = 0;
@@ -563,15 +575,7 @@ int print_flt_avg(uint16_t buff_index, bool buff_initialised) {
     uint8_t msg[5] = {MSG_STATE_FOUR, 0xFF, 0xFF, 0xFF, 0xFF};
 
     memcpy(msg+1, &velocity2, sizeof(velocity2));
-
-    //float* asd = (float*)msg+1;
-    //*asd = velocity2;
-    //msg[0] = MSG_STATE_FOUR;
-    //msg[1] = velocity2;
-    //msg[2] = 0;
     send(recipient, "8888", msg, 5, 1);
-
-    //free(msg);
 
     return 0;
 }
@@ -613,6 +617,7 @@ int cont_velocity(uint16_t prev_dist, uint16_t buff_index, bool buff_initialised
 static const shell_command_t shell_commands[] = {
     { "print_distance", "Take a distance measurement from lidar", print_distance },
     { "start", "Start state machine", cmd_start },
+    { "dist", "Continuous distance measurements", cmd_dist },
     { "rate", "Update frame rate", init_lidar },
     { "start_server", "Starts the UDP server", cmd_start_server},
     { NULL, NULL, NULL }

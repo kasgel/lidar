@@ -11,9 +11,9 @@ USEMODULE += gnrc_netdev_default
 USEMODULE += auto_init_gnrc_netif
 
 # Ed added
-CFLAGS += -DTEST_SUITES
-CFLAGS += -DLOG_LEVEL=LOG_ALL
-CFLAGS += -DDEBUG_ASSERT_VERBOSE
+#CFLAGS += -DTEST_SUITES
+#CFLAGS += -DLOG_LEVEL=LOG_ALL
+#CFLAGS += -DDEBUG_ASSERT_VERBOSE
 
 # Activate ICMPv6 error messages
 USEMODULE += gnrc_icmpv6_error
