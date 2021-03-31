@@ -48,14 +48,14 @@
 
 
 #ifndef I2C_ACK
-#define I2C_ACK         (0)
+#define I2C_ACK             (0)
 #endif
 
-#define BUFSIZE         (128U)
+#define BUFSIZE             (128U)
 
-#define MEASUREMENT_FREQ (100) // 100 Hz
-#define MEASUREMENT_SLEEP (1000000*0.97/MEASUREMENT_FREQ) // Sleep interval in microseconds (modified to account for code execution)
-#define UPDATE_FREQ     (100)
+#define MEASUREMENT_FREQ    (100) // 100 Hz
+#define MEASUREMENT_SLEEP   (1000000*0.97/MEASUREMENT_FREQ) // Sleep interval in microseconds (modified to account for code execution)
+#define UPDATE_FREQ         (100)
 
 // For sending UDP messages
 #define SERVER_MSG_QUEUE_SIZE   (8U)
@@ -77,7 +77,6 @@ static gnrc_netreg_entry_t server = GNRC_NETREG_ENTRY_INIT_PID(0, KERNEL_PID_UND
 static char server_stack[SERVER_STACKSIZE];
 static msg_t server_queue[SERVER_MSG_QUEUE_SIZE];
 static kernel_pid_t server_pid = KERNEL_PID_UNDEF;
-//static uint8_t send_count = 0;
 static gnrc_pktsnip_t *payload;
 
 
@@ -113,10 +112,7 @@ static void *_eventloop(void *arg)
                 printf("Packets received: %u\n", ++rcv_count);
                 pkt = msg.content.ptr;
                 pkt = gnrc_pktsnip_search_type(pkt, GNRC_NETTYPE_UNDEF);
-                //printf("Packet size: %d\n", pkt->size);
                 od_hex_dump(pkt->data, pkt->size, OD_WIDTH_DEFAULT);
-                //printf("Content of message: %" PRIu32 "\n", msg.content.value);
-                //printf("Content of message char: %c\n", (char*)pkt->data);
                 float vel = 0;
                 switch (*(uint8_t*)pkt->data)
                 {
@@ -131,7 +127,6 @@ static void *_eventloop(void *arg)
                         break;
                     case MSG_STATE_FOUR:
                         memcpy(&vel, (uint8_t*)pkt->data + 1, sizeof(vel));
-                        //vel = *((uint8_t*)(pkt->data) + 1);
                         printf("State 4: Object velocity: ");
                         print_float(vel, 2);
                         printf("\n");
@@ -140,9 +135,6 @@ static void *_eventloop(void *arg)
                         printf("Unknown message received: %d", *(uint8_t*)pkt->data);
                         break;
                 }
-                //print_byte_hex(*(uint8_t*)pkt->data);
-                //printf("\n");
-                //printf("Old printf statement %u\n", *(uint8_t*)pkt->data);
                 gnrc_pktbuf_release(msg.content.ptr);
                 break;
             case GNRC_NETAPI_MSG_TYPE_GET:
@@ -186,13 +178,6 @@ static void send(char *addr_str, char *port_str, uint8_t *data, unsigned int len
         puts("Error: unable to parse destination port");
         return;
     }
-    
-    // Wait until packet buffer is empty
-    /*printf("1: %d\n", gnrc_pktbuf_is_empty());
-    while (!gnrc_pktbuf_is_empty()) {
-        //printf("sleepytime\n");
-        xtimer_usleep(1000);
-    }*/
 
     for (unsigned int i = 0; i < num; i++) {
         gnrc_pktsnip_t *udp, *ip;
@@ -200,7 +185,6 @@ static void send(char *addr_str, char *port_str, uint8_t *data, unsigned int len
 
         /* allocate payload */
         payload = gnrc_pktbuf_add(NULL, data, len, GNRC_NETTYPE_UNDEF);
-        //printf("2: %d\n", gnrc_pktbuf_is_empty());
         if (payload == NULL) {
             puts("Error: unable to copy data to packet buffer");
             return;
@@ -228,7 +212,6 @@ static void send(char *addr_str, char *port_str, uint8_t *data, unsigned int len
             gnrc_netif_hdr_set_netif(netif_hdr->data, netif);
             LL_PREPEND(ip, netif_hdr);
         }
-        //printf("3: %d\n", gnrc_pktbuf_is_empty());
         /* send packet */
         if (!gnrc_netapi_dispatch_send(GNRC_NETTYPE_UDP, GNRC_NETREG_DEMUX_CTX_ALL, ip)) {
             puts("Error: unable to locate UDP thread");
@@ -239,8 +222,6 @@ static void send(char *addr_str, char *port_str, uint8_t *data, unsigned int len
          * => use temporary variable for output */
         printf("Success: sent %u byte(s) to [%s]:%u\n", payload_size, addr_str,
                port);
-               //printf("4: %d\n", gnrc_pktbuf_is_empty());
-        //xtimer_usleep(20000);
     }
 }
 
@@ -349,8 +330,8 @@ uint16_t lidar_distance(void) {
         return _print_i2c_error(res);
     }
     uint16_t d = ((i2c_buf[3] << 8) | i2c_buf[2]);
-    //uint16_t strength = ((i2c_buf[5] << 8) | i2c_buf[4]);
-    //printf("Dist: %d mm\n", d);
+    uint16_t strength = ((i2c_buf[5] << 8) | i2c_buf[4]);
+    printf("Dist: %d mm, Strength: %d\n", d, strength);
     
     // Our distance measurement should now exist in the 3rd and 4th indices of i2c_buf
     return d;
@@ -386,57 +367,9 @@ int init_lidar(int argc, char **argv) {
     res = i2c_read_bytes(dev, addr, i2c_buf, 5, 0);
     if (res != I2C_ACK) {
         return _print_i2c_error(res);
-    } else {
-        //_print_i2c_read(dev, NULL, i2c_buf, 9);
     }
-    printf("OK\n");
-    return 0;
-
-    // Set measurement unit to millimeters
-    /*uint8_t data[5] = { 0x5A, 0x05, 0x05, 0x06, 0x6A }; // Checksum 0x6A
-    int res = i2c_write_bytes(dev, addr, data, sizeof(data), 0);
-    if (res != I2C_ACK) {
-        return _print_i2c_error(res);
-    }
-    xtimer_usleep(100000);
-
-    res = i2c_read_bytes(dev, addr, i2c_buf, 5, 0);
-    if (res != I2C_ACK) {
-        return _print_i2c_error(res);
-    } else {
-        _print_i2c_read(dev, NULL, i2c_buf, 9);
-    }*/
-
-    // Enable output
-    //uint8_t data2[5] = { 0x5A, 0x05, 0x07, 0x01, 0x67 }; // Checksum 0x67
-    /*uint8_t data2[5] = { 0x5A, 0x05, 0x07, 0x00, 0x66 }; // Checksum 0x67
-    res = i2c_write_bytes(dev, addr, data2, sizeof(data2), 0);
-    if (res != I2C_ACK) {
-        return _print_i2c_error(res);
-    }
-    xtimer_usleep(100000);
-
-    res = i2c_read_bytes(dev, addr, i2c_buf, 5, 0);
-    if (res != I2C_ACK) {
-        return _print_i2c_error(res);
-    } else {
-        _print_i2c_read(dev, NULL, i2c_buf, 5);
-    }*/
 
     printf("OK\n");
-
-    return 0;
-}
-
-int print_distance(int argc, char **argv) {
-    (void)argv;
-    (void)argc;
-    uint16_t dist = lidar_distance();
-
-    if (dist > 0) {
-        printf("Distance: %i mm\n", dist);
-    }
-
     return 0;
 }
 
@@ -445,7 +378,10 @@ void initialize(void) {
     //track_gauge = 1435;
     track_gauge = 6000;
     alpha = M_PI/2;
-    printf("Cos(alpha): %f\n", cos(alpha));
+    
+    printf("Cos(alpha): ");
+    print_float(cos(alpha), 2);
+    printf("\n");
 
     if (alpha == M_PI/2) {
         theoretical_largest_d = 1160;
@@ -479,8 +415,7 @@ int cmd_start_server(int argc, char **argv)
 // State 1 of state diagram: Loop until there is an object within distance bounds
 int come_here_my_train(void) {
     printf("State 1\n");
-    //xtimer_usleep(600000);
-   // uint8_t msg[1] = {MSG_STATE_ONE};
+    // uint8_t msg[1] = {MSG_STATE_ONE};
     //send(recipient, "8888", msg, 1, 1);
 
     while (true) {
@@ -543,8 +478,6 @@ int init_diff_buff(void)
 }
 
 int print_flt_avg(uint16_t buff_index, bool buff_initialised) {
-    //printf("Hello\n");
-
     // compute sum of differences
     int16_t sum = 0;
     if (buff_initialised) {
@@ -558,7 +491,6 @@ int print_flt_avg(uint16_t buff_index, bool buff_initialised) {
     if (!buff_initialised)
     {
         sum = sum * (MEASUREMENT_FREQ / buff_index);
-        //xtimer_usleep(300000);
     }
     
     
@@ -571,7 +503,6 @@ int print_flt_avg(uint16_t buff_index, bool buff_initialised) {
     print_float(velocity2, 2);
     printf("\n");
 
-    //char* msg = malloc(sizeof(uint8_t) + sizeof(float) + 1);
     uint8_t msg[5] = {MSG_STATE_FOUR, 0xFF, 0xFF, 0xFF, 0xFF};
 
     memcpy(msg+1, &velocity2, sizeof(velocity2));
@@ -584,7 +515,6 @@ int print_flt_avg(uint16_t buff_index, bool buff_initialised) {
 int cont_velocity(uint16_t prev_dist, uint16_t buff_index, bool buff_initialised) {
     xtimer_usleep(MEASUREMENT_SLEEP);
 
-    //printf("State 4, i: %i\n", buff_index);
     uint16_t dist = lidar_distance();
 
     if (dist == 0 || dist > theoretical_largest_d) {
@@ -600,7 +530,6 @@ int cont_velocity(uint16_t prev_dist, uint16_t buff_index, bool buff_initialised
     int16_t difference = dist - prev_dist;
     rolling_avg_buff[buff_index] = difference;
 
-    //printf("Should equal zero for velocity reading: %d\n", (buff_index + 1) % UPDATE_FREQ);
     if ((buff_index + 1) % UPDATE_FREQ == 0)
     {
         print_flt_avg(MEASUREMENT_FREQ, buff_initialised);
@@ -615,7 +544,6 @@ int cont_velocity(uint16_t prev_dist, uint16_t buff_index, bool buff_initialised
 
 
 static const shell_command_t shell_commands[] = {
-    { "print_distance", "Take a distance measurement from lidar", print_distance },
     { "start", "Start state machine", cmd_start },
     { "dist", "Continuous distance measurements", cmd_dist },
     { "rate", "Update frame rate", init_lidar },
@@ -627,7 +555,7 @@ int main(void)
 {
     puts("Start: Lidar testing\n");
 
-    char line_buf[SHELL_DEFAULT_BUFSIZE];
+    //char line_buf[SHELL_DEFAULT_BUFSIZE];
 
     puts("Attempting to acquire I2C bus\n");
     int acq_req;
@@ -642,12 +570,8 @@ int main(void)
 
     // Initialise packet buffer
     gnrc_pktbuf_init();
-    
-    // Start the server
-    //start_server("8888");
 
-    puts("Server started.\n");
-
+    //cmd_start(0, NULL);
     shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
 
     return 0;
