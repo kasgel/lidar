@@ -1,18 +1,28 @@
 /*
- * Copyright (C) 2014 Freie Universität Berlin
+ * Copyright (C) Kasper Oikarinen, Edward Chancellor and
+ * Freie Universitat Berlin
  *
  * This file is subject to the terms and conditions of the GNU Lesser
  * General Public License v2.1. See the file LICENSE in the top level
  * directory for more details.
+ *
  */
 
-/** 
- * @ingroup tests
- * @{
+/**
+ * This is a prototype application for train motion tracking using the
+ * TFMini Plus 1D LIDAR sensor connected to the I2C bus.
+ * Developed for AVR-RSS2 running RIOT OS.
  *
- * @file
- * @brief       Test application for the low-level I2C peripheral driver
+ * Portions on the code implementing I2C communication is based on the 
+ * RIOT OS example code developed by Hauke Petersen and Kevin Weiss 
+ * in the tests/periph_i2c module of the RIOT OS repository.
  *
+ * Portions of the code implementing communication over 6LoWPAN is based on the 
+ * RIOT OS example code developed by Hauke Petersen and Martine Lenders 
+ * in the examples/gnrc_networking module of the RIOT OS repository.
+ *
+ * @author      Kasper Oikarinen <kaspero@kth.se>
+ * @author      Edward Chancellor <egch@kth.se>
  * @author      Hauke Petersen <hauke.petersen@fu-berlin.de>
  * @author      Kevin Weiss <kevin.weiss@haw-hamburg.de>
  *
@@ -53,8 +63,13 @@
 
 #define BUFSIZE             (128U)
 
-#define MEASUREMENT_FREQ    (100) // 100 Hz
-#define MEASUREMENT_SLEEP   (1000000*0.97/MEASUREMENT_FREQ) // Sleep interval in microseconds (modified to account for code execution)
+// Frequency: 100 Hz
+#define MEASUREMENT_FREQ    (100)
+
+// Sleep interval in microseconds (modified to account for code execution)
+#define MEASUREMENT_SLEEP   (1000000*0.97/MEASUREMENT_FREQ)
+
+// How many nth measurement do we want to calculate velocity?
 #define UPDATE_FREQ         (100)
 
 // For sending UDP messages
@@ -69,7 +84,9 @@
 #define MSG_STATE_THREE     (0x03)
 #define MSG_STATE_FOUR      (0x04)
 
-
+/** IPv6 address of board that is going to receive the state
+ *  change messages over 6LoWPAN
+ */
 static char* recipient = "fe80::fec2:3d00:1:7f97";
 
 static gnrc_netreg_entry_t server = GNRC_NETREG_ENTRY_INIT_PID(0, KERNEL_PID_UNDEF);
@@ -84,8 +101,6 @@ static gnrc_pktsnip_t *payload;
 static uint8_t i2c_buf[BUFSIZE];
 
 static double alpha;
-static uint16_t track_gauge;
-static uint16_t distance_from_rail;
 static uint16_t theoretical_shortest_d;
 static uint16_t theoretical_largest_d;
 static int16_t rolling_avg_buff[MEASUREMENT_FREQ];
@@ -256,22 +271,6 @@ static void start_server(char *port_str)
     printf("Success: started UDP server on port %" PRIu16 "\n", port);
 }
 
-// static void stop_server(void)
-// {
-//     msg_t msg = { .type = SERVER_RESET };
-//     /* check if server is running at all */
-//     if (server.target.pid == KERNEL_PID_UNDEF) {
-//         printf("Error: server was not running\n");
-//         return;
-//     }
-//     /* reset server state */
-//     msg_send(&msg, server.target.pid);
-//     /* stop server */
-//     gnrc_netreg_unregister(GNRC_NETTYPE_UDP, &server);
-//     gnrc_netreg_entry_init_pid(&server, 0, KERNEL_PID_UNDEF);
-//     puts("Success: stopped UDP server");
-// }
-
 static int _print_i2c_error(int res)
 {
     if (res == -EOPNOTSUPP) {
@@ -374,24 +373,13 @@ int init_lidar(int argc, char **argv) {
 }
 
 void initialize(void) {
-    distance_from_rail = 500; // 100 cm / 1000 mm
-    //track_gauge = 1435;
-    track_gauge = 6000;
     alpha = M_PI/2;
     
     printf("Cos(alpha): ");
     print_float(cos(alpha), 2);
     printf("\n");
-
-    if (alpha == M_PI/2) {
-        theoretical_largest_d = 1160;
-        theoretical_shortest_d = 300;
-    } else {
-        //theoretical_largest_d = (distance_from_rail + track_gauge) / cos(alpha);
-        theoretical_largest_d = 12000;
-        theoretical_shortest_d = 3500;
-        //theoretical_shortest_d = distance_from_rail / cos(alpha);
-    }
+    theoretical_largest_d = 1160;
+    theoretical_shortest_d = 300;
 }
 
 int cmd_start(int argc, char **argv) {
