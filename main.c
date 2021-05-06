@@ -543,7 +543,7 @@ int main(void)
 {
     puts("Start: Lidar testing\n");
 
-    //char line_buf[SHELL_DEFAULT_BUFSIZE];
+    char line_buf[SHELL_DEFAULT_BUFSIZE];
 
     puts("Attempting to acquire I2C bus\n");
     int acq_req;
